@@ -2,27 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  CreditCard,
-  LayoutDashboard,
-  ScrollText,
-  Settings,
-  Shield,
-  Users,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { appNavItems } from "@/lib/navigation";
-
-const navIcons: Record<string, LucideIcon> = {
-  "/dashboard": LayoutDashboard,
-  "/recovery": Shield,
-  "/payments": CreditCard,
-  "/customers": Users,
-  "/audit": ScrollText,
-  "/settings": Settings,
-};
 
 type SidebarProps = {
   onNavigate?: () => void;
@@ -49,7 +31,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
 
       <nav className="flex flex-1 flex-col gap-1 p-3" aria-label="Main">
         {appNavItems.map((item) => {
-          const Icon = navIcons[item.href];
+          const Icon = item.icon;
           const isActive = pathname === item.href;
 
           return (
@@ -64,7 +46,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
                   : "text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground",
               )}
             >
-              {Icon ? <Icon className="size-4 shrink-0" /> : null}
+              <Icon className="size-4 shrink-0" />
               <span>{item.label}</span>
             </Link>
           );

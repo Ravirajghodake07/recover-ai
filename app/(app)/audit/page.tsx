@@ -1,428 +1,335 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  Activity,
   CheckCircle2,
   Clock3,
-  FileSearch,
-  Filter,
   Search,
   ShieldAlert,
-  ShieldCheck,
-  Zap,
+  XCircle,
 } from "lucide-react";
+
 import {
   getAuditRecords,
   type AuditRecord,
 } from "@/lib/recovery-store";
+import { formatCurrency } from "@/lib/format";
 
-type AuditEvent = {
-  id: string;
-  timestamp: string;
-  caseId: string;
-  customer: string;
-  event: string;
-  action: string;
-  confidence: number;
-  approval: "Auto-approved" | "Approval required" | "Blocked";
-  amount: number;
-};
+function statusClasses(status: AuditRecord["approvalStatus"]) {
+  switch (status) {
+    case "Auto-approved":
+      return "border-emerald-500/20 bg-emerald-500/10 text-emerald-500";
 
-const auditEvents: AuditEvent[] = [
-  {
-    id: "AUD-1001",
-    timestamp: "11:15:15 am",
-    caseId: "REC-82820",
-    customer: "Nimbus Retail",
-    event: "Case analyzed",
-    action: "Retry payment",
-    confidence: 93,
-    approval: "Auto-approved",
-    amount: 2860,
-  },
-  {
-    id: "AUD-1002",
-    timestamp: "11:15:15 am",
-    caseId: "REC-82820",
-    customer: "Nimbus Retail",
-    event: "Root cause identified",
-    action: "Temporary payment processing failure",
-    confidence: 93,
-    approval: "Auto-approved",
-    amount: 2860,
-  },
-  {
-    id: "AUD-1003",
-    timestamp: "11:15:16 am",
-    caseId: "REC-82854",
-    customer: "Pixelworks Studio",
-    event: "Recovery action recommended",
-    action: "Send payment link",
-    confidence: 71,
-    approval: "Auto-approved",
-    amount: 3974,
-  },
-  {
-    id: "AUD-1004",
-    timestamp: "11:15:16 am",
-    caseId: "REC-82871",
-    customer: "Orbit Systems",
-    event: "Approval required",
-    action: "Send payment reminder",
-    confidence: 81,
-    approval: "Approval required",
-    amount: 38080,
-  },
-  {
-    id: "AUD-1005",
-    timestamp: "11:15:17 am",
-    caseId: "REC-82931",
-    customer: "Acme Technologies",
-    event: "Recovery action executed",
-    action: "Retry payment",
-    confidence: 92,
-    approval: "Auto-approved",
-    amount: 42500,
-  },
-  {
-    id: "AUD-1006",
-    timestamp: "11:15:18 am",
-    caseId: "REC-82918",
-    customer: "Northstar Labs",
-    event: "Recovery action blocked",
-    action: "Request payment method update",
-    confidence: 85,
-    approval: "Blocked",
-    amount: 18900,
-  },
-];
+    case "Blocked":
+      return "border-red-500/20 bg-red-500/10 text-red-500";
 
-function formatAmount(amount: number) {
-  return `₹${amount.toLocaleString("en-IN")}`;
+    default:
+      return "border-amber-500/20 bg-amber-500/10 text-amber-500";
+  }
 }
 
-function EventIcon({ event }: { event: string }) {
-  const normalizedEvent = event.toLowerCase();
-
-  if (normalizedEvent.includes("blocked")) {
-    return <ShieldAlert size={17} />;
+function eventIcon(event: AuditRecord["event"]) {
+  if (event === "Recovery action executed") {
+    return <CheckCircle2 className="size-4 text-emerald-500" />;
   }
 
-  if (normalizedEvent.includes("approval")) {
-    return <ShieldCheck size={17} />;
+  if (event === "Recovery action blocked") {
+    return <XCircle className="size-4 text-red-500" />;
   }
 
-  if (normalizedEvent.includes("executed")) {
-    return <CheckCircle2 size={17} />;
+  if (event === "Approval required") {
+    return <ShieldAlert className="size-4 text-amber-500" />;
   }
 
-  if (normalizedEvent.includes("recommended")) {
-    return <Zap size={17} />;
+  return <Activity className="size-4 text-primary" />;
+}
+
+function formatTimestamp(timestamp: string) {
+  const date = new Date(timestamp);
+
+  if (Number.isNaN(date.getTime())) {
+    return timestamp;
   }
 
-  return <FileSearch size={17} />;
+  return new Intl.DateTimeFormat("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
 }
 
 export default function AuditPage() {
+  const [events, setEvents] = useState<AuditRecord[]>([]);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("All");
-  const [storedEvents] = useState<AuditRecord[]>(() => getAuditRecords());
+  const [filter, setFilter] = useState<"All" | AuditRecord["approvalStatus"]>(
+    "All",
+  );
+  const [isMounted, setIsMounted] = useState(false);
 
-  const events: AuditEvent[] =
-    storedEvents.length > 0
-      ? storedEvents.map((record) => ({
-          id: record.id,
-          timestamp: new Date(record.timestamp).toLocaleTimeString("en-IN", {
-            hour: "numeric",
-            minute: "2-digit",
-            second: "2-digit",
-          }),
-          caseId: record.caseId,
-          customer: record.customer,
-          event: record.event,
-          action: record.action,
-          confidence: record.confidence,
-          approval: record.approvalStatus,
-          amount: record.amountValue,
-        }))
-      : auditEvents;
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setEvents(getAuditRecords());
+      setIsMounted(true);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const filteredEvents = useMemo(() => {
-    const normalizedSearch = search.toLowerCase().trim();
+    const query = search.trim().toLowerCase();
 
-    return events.filter((item) => {
-      const matchesSearch =
-        normalizedSearch.length === 0 ||
-        item.customer.toLowerCase().includes(normalizedSearch) ||
-        item.caseId.toLowerCase().includes(normalizedSearch) ||
-        item.event.toLowerCase().includes(normalizedSearch) ||
-        item.action.toLowerCase().includes(normalizedSearch);
+    return events
+      .filter((event) => {
+        const matchesSearch =
+          !query ||
+          event.customer.toLowerCase().includes(query) ||
+          event.caseId.toLowerCase().includes(query) ||
+          event.event.toLowerCase().includes(query) ||
+          event.action.toLowerCase().includes(query);
 
-      const matchesFilter =
-        filter === "All" ||
-        (filter === "Approval required" &&
-          item.approval === "Approval required") ||
-        (filter === "Auto-approved" && item.approval === "Auto-approved") ||
-        (filter === "Blocked" && item.approval === "Blocked");
+        const matchesFilter =
+          filter === "All" || event.approvalStatus === filter;
 
-      return matchesSearch && matchesFilter;
-    });
+        return matchesSearch && matchesFilter;
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.timestamp).getTime() -
+          new Date(a.timestamp).getTime(),
+      );
   }, [events, search, filter]);
 
-  const totalRecovered = events.reduce(
-    (total, item) => total + item.amount,
-    0,
-  );
-
-  const approvals = events.filter(
-    (item) => item.approval === "Approval required",
+  const executedCount = events.filter(
+    (event) => event.event === "Recovery action executed",
   ).length;
 
-  const executed = events.filter((item) =>
-    item.event.toLowerCase().includes("executed"),
+  const blockedCount = events.filter(
+    (event) => event.event === "Recovery action blocked",
   ).length;
 
-  return (
-    <main className="space-y-6">
-      {/* Header */}
-      <div>
-        <p className="mb-2 flex items-center gap-2 text-sm text-amber-400">
-          <Clock3 size={16} />
-          Recovery activity
-        </p>
+  const approvalCount = events.filter(
+    (event) => event.event === "Approval required",
+  ).length;
 
-        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight">
-              Audit trail
-            </h1>
+  const executedValue = events
+    .filter((event) => event.event === "Recovery action executed")
+    .reduce((sum, event) => sum + event.amountValue, 0);
 
-            <p className="mt-2 max-w-2xl text-sm text-neutral-400">
-              Review every decision made by the RecoverAI recovery engine.
-              Actions, approvals, and recovery recommendations are recorded
-              for compliance and traceability.
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-neutral-800 bg-[#11100e] px-4 py-3">
-            <p className="text-xs uppercase tracking-wider text-neutral-500">
-              Latest activity
-            </p>
-
-            <p className="mt-1 text-sm font-medium">
-              {events.length} events recorded
-            </p>
-          </div>
+  if (!isMounted) {
+    return (
+      <div className="flex h-96 items-center justify-center">
+        <div className="animate-pulse text-sm text-muted-foreground">
+          Loading audit trail...
         </div>
       </div>
+    );
+  }
 
-      {/* Metrics */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <div className="rounded-xl border border-neutral-800 bg-[#11100e] p-5">
-          <p className="text-xs uppercase tracking-wider text-neutral-500">
-            Events recorded
+  return (
+    <div className="mx-auto w-full max-w-[1600px] space-y-6 pb-10">
+      <section>
+        <div className="mb-3 flex items-center gap-2 text-xs text-muted-foreground">
+          <ShieldAlert className="size-3.5 text-primary" />
+          Recovery governance
+        </div>
+
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+          Audit trail
+        </h1>
+
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+          Every recovery decision is recorded so merchants can understand
+          what the agent analyzed, recommended, approved, executed, or blocked.
+        </p>
+      </section>
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-xl border border-border bg-card p-5">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Activity className="size-[18px]" />
+          </div>
+
+          <p className="mt-5 text-sm text-muted-foreground">
+            Total audit events
           </p>
 
-          <p className="mt-2 text-2xl font-semibold">
+          <p className="mt-1 text-2xl font-semibold tracking-tight">
             {events.length}
           </p>
         </div>
 
-        <div className="rounded-xl border border-neutral-800 bg-[#11100e] p-5">
-          <p className="text-xs uppercase tracking-wider text-neutral-500">
+        <div className="rounded-xl border border-border bg-card p-5">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-500">
+            <CheckCircle2 className="size-[18px]" />
+          </div>
+
+          <p className="mt-5 text-sm text-muted-foreground">
             Actions executed
           </p>
 
-          <p className="mt-2 text-2xl font-semibold">
-            {executed}
+          <p className="mt-1 text-2xl font-semibold tracking-tight">
+            {executedCount}
           </p>
         </div>
 
-        <div className="rounded-xl border border-neutral-800 bg-[#11100e] p-5">
-          <p className="text-xs uppercase tracking-wider text-neutral-500">
-            Approval required
+        <div className="rounded-xl border border-border bg-card p-5">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
+            <Clock3 className="size-[18px]" />
+          </div>
+
+          <p className="mt-5 text-sm text-muted-foreground">
+            Approval events
           </p>
 
-          <p className="mt-2 text-2xl font-semibold">
-            {approvals}
-          </p>
-        </div>
-
-        <div className="rounded-xl border border-neutral-800 bg-[#11100e] p-5">
-          <p className="text-xs uppercase tracking-wider text-neutral-500">
-            Value evaluated
-          </p>
-
-          <p className="mt-2 text-2xl font-semibold">
-            {formatAmount(totalRecovered)}
+          <p className="mt-1 text-2xl font-semibold tracking-tight">
+            {approvalCount}
           </p>
         </div>
-      </div>
 
-      {/* Audit table */}
-      <section className="overflow-hidden rounded-xl border border-neutral-800 bg-[#11100e]">
-        <div className="border-b border-neutral-800 p-5">
-          <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
-            <div>
-              <h2 className="text-lg font-semibold">
-                Agent activity
-              </h2>
+        <div className="rounded-xl border border-border bg-card p-5">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-red-500/10 text-red-500">
+            <XCircle className="size-[18px]" />
+          </div>
 
-              <p className="mt-1 text-sm text-neutral-500">
-                Immutable-style local records of recovery decisions.
-              </p>
+          <p className="mt-5 text-sm text-muted-foreground">
+            Blocked actions
+          </p>
+
+          <p className="mt-1 text-2xl font-semibold tracking-tight">
+            {blockedCount}
+          </p>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
+        <div className="flex flex-col gap-4 border-b border-border px-5 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="font-medium">Decision history</h2>
+
+            <p className="mt-1 text-xs text-muted-foreground">
+              {formatCurrency(executedValue)} represented by executed recovery
+              actions
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search audit events..."
+                className="h-9 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground focus:border-primary sm:w-64"
+              />
             </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row">
-              {/* Search */}
-              <div className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-[#0d0c0b] px-3 py-2">
-                <Search
-                  size={17}
-                  className="text-neutral-500"
-                />
-
-                <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search audit events..."
-                  className="w-full bg-transparent text-sm outline-none placeholder:text-neutral-600 sm:w-56"
-                />
-              </div>
-
-              {/* Filter */}
-              <div className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-[#0d0c0b] px-3 py-2">
-                <Filter
-                  size={16}
-                  className="text-neutral-500"
-                />
-
-                <select
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  className="bg-[#0d0c0b] text-sm text-white outline-none"
-                >
-                  <option
-                    value="All"
-                    className="bg-[#0d0c0b] text-white"
-                  >
-                    All
-                  </option>
-
-                  <option
-                    value="Auto-approved"
-                    className="bg-[#0d0c0b] text-white"
-                  >
-                    Auto-approved
-                  </option>
-
-                  <option
-                    value="Approval required"
-                    className="bg-[#0d0c0b] text-white"
-                  >
-                    Approval required
-                  </option>
-
-                  <option
-                    value="Blocked"
-                    className="bg-[#0d0c0b] text-white"
-                  >
-                    Blocked
-                  </option>
-                </select>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Desktop headings */}
-        <div className="hidden grid-cols-[1.1fr_1fr_1.4fr_1.3fr_.7fr_1fr_.9fr] gap-4 border-b border-neutral-800 px-5 py-3 text-xs uppercase tracking-wider text-neutral-500 lg:grid">
-          <span>Time / Case</span>
-          <span>Customer</span>
-          <span>Event</span>
-          <span>Action</span>
-          <span>Confidence</span>
-          <span>Approval</span>
-          <span>Value</span>
-        </div>
-
-        {filteredEvents.length === 0 ? (
-          <div className="p-10 text-center text-sm text-neutral-500">
-            No audit events match your search.
-          </div>
-        ) : (
-          filteredEvents.map((item) => (
-            <div
-              key={item.id}
-              className="grid gap-4 border-b border-neutral-800 px-5 py-5 last:border-b-0 lg:grid-cols-[1.1fr_1fr_1.4fr_1.3fr_.7fr_1fr_.9fr] lg:items-center"
+            <select
+              value={filter}
+              onChange={(event) =>
+                setFilter(
+                  event.target.value as
+                    | "All"
+                    | AuditRecord["approvalStatus"],
+                )
+              }
+              className="h-9 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary"
             >
-              {/* Time / Case */}
-              <div>
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <span className="text-amber-400">
-                    <EventIcon event={item.event} />
-                  </span>
+              <option value="All">All events</option>
+              <option value="Auto-approved">Executed</option>
+              <option value="Approval required">Approval required</option>
+              <option value="Blocked">Blocked</option>
+            </select>
+          </div>
+        </div>
 
-                  {item.timestamp}
+        {filteredEvents.length > 0 ? (
+          <div className="divide-y divide-border">
+            {filteredEvents.map((event) => (
+              <div
+                key={event.id}
+                className="flex flex-col gap-4 px-5 py-5 transition-colors hover:bg-secondary/20 sm:px-6 lg:flex-row lg:items-center"
+              >
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
+                    {eventIcon(event.event)}
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">
+                      {event.event}
+                    </p>
+
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {event.customer} · {event.caseId}
+                    </p>
+                  </div>
                 </div>
 
-                <p className="mt-1 text-xs text-neutral-500">
-                  {item.caseId}
-                </p>
-              </div>
+                <div className="min-w-[190px]">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Action
+                  </p>
 
-              {/* Customer */}
-              <div>
-                <p className="text-sm font-medium">
-                  {item.customer}
-                </p>
-              </div>
+                  <p className="mt-1 truncate text-sm font-medium">
+                    {event.action}
+                  </p>
+                </div>
 
-              {/* Event */}
-              <div>
-                <p className="text-sm">
-                  {item.event}
-                </p>
-              </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Amount
+                  </p>
 
-              {/* Action */}
-              <div>
-                <p className="text-sm text-neutral-300">
-                  {item.action}
-                </p>
-              </div>
+                  <p className="mt-1 text-sm font-medium">
+                    {formatCurrency(event.amountValue)}
+                  </p>
+                </div>
 
-              {/* Confidence */}
-              <div>
-                <p className="text-sm font-medium">
-                  {item.confidence}%
-                </p>
-              </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Confidence
+                  </p>
 
-              {/* Approval */}
-              <div>
+                  <p className="mt-1 text-sm font-medium">
+                    {event.confidence}%
+                  </p>
+                </div>
+
+                <div className="lg:min-w-[190px]">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Time
+                  </p>
+
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {formatTimestamp(event.timestamp)}
+                  </p>
+                </div>
+
                 <span
-                  className={`inline-flex rounded-full border px-2.5 py-1 text-xs ${
-                    item.approval === "Auto-approved"
-                      ? "border-amber-900/60 bg-amber-950/30 text-amber-400"
-                      : item.approval === "Approval required"
-                        ? "border-amber-700/60 bg-amber-950/40 text-amber-300"
-                        : "border-neutral-700 bg-neutral-900 text-neutral-400"
-                  }`}
+                  className={`inline-flex w-fit rounded-full border px-2.5 py-1 text-xs font-medium ${statusClasses(
+                    event.approvalStatus,
+                  )}`}
                 >
-                  {item.approval}
+                  {event.approvalStatus}
                 </span>
               </div>
+            ))}
+          </div>
+        ) : (
+          <div className="px-6 py-16 text-center">
+            <Activity className="mx-auto size-8 text-muted-foreground/50" />
 
-              {/* Amount */}
-              <div>
-                <p className="text-sm font-medium">
-                  {formatAmount(item.amount)}
-                </p>
-              </div>
-            </div>
-          ))
+            <p className="mt-4 text-sm font-medium">
+              No audit events found
+            </p>
+
+            <p className="mt-1 text-xs text-muted-foreground">
+              Run recovery analysis to create an auditable decision trail.
+            </p>
+          </div>
         )}
       </section>
-    </main>
+    </div>
   );
 }

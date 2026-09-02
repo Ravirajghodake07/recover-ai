@@ -1,3 +1,9 @@
+import {
+  checkApprovalStatus,
+  getPolicy,
+  type RecoveryPolicy,
+} from "@/lib/recovery-policy";
+
 export type RecoveryCaseInput = {
   id: string;
   type: string;
@@ -28,9 +34,6 @@ type RecoveryRule = {
   recoveryProbability: number;
   reason: string;
 };
-
-const HIGH_VALUE_APPROVAL_THRESHOLD = 50_000;
-const REPEATED_FAILURE_THRESHOLD = 2;
 
 function clamp(value: number) {
   return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
@@ -125,8 +128,9 @@ function getPriority(
   amountValue: number,
   estimatedRecoveryAmount: number,
   recoveryProbability: number,
+  highValueThreshold: number,
 ): RecoveryPriority {
-  if (amountValue >= HIGH_VALUE_APPROVAL_THRESHOLD) {
+  if (amountValue >= highValueThreshold) {
     return "Critical";
   }
 
@@ -148,7 +152,9 @@ function getPriority(
  */
 export function analyzeRecoveryCase(
   caseData: RecoveryCaseInput,
+  policy?: RecoveryPolicy,
 ): RecoveryDecision {
+  const currentPolicy = policy ?? getPolicy();
   const normalizedAmount = toNonNegativeNumber(caseData.amountValue);
   const normalizedAttempts = toNonNegativeNumber(caseData.attempts);
   const rule = getRule({ ...caseData, attempts: normalizedAttempts });
@@ -160,18 +166,18 @@ export function analyzeRecoveryCase(
   const recoveryProbability = Math.round(
     clamp(rule.recoveryProbability - normalizedAttempts * 9),
   );
-  const requiresApproval =
-    normalizedAmount >= HIGH_VALUE_APPROVAL_THRESHOLD ||
-    normalizedAttempts >= REPEATED_FAILURE_THRESHOLD;
   const estimatedRecoveryAmount = Math.round(
     normalizedAmount * (recoveryProbability / 100),
   );
+  const approval = checkApprovalStatus(
+    normalizedAmount,
+    confidence,
+    normalizedAttempts,
+    currentPolicy,
+  );
+  const requiresApproval = approval.requiresApproval;
   const reason = requiresApproval
-    ? `${rule.reason} Merchant approval is required because ${
-        normalizedAttempts >= REPEATED_FAILURE_THRESHOLD
-          ? "the case has repeated recovery attempts."
-          : "the transaction value is high."
-      }`
+    ? `${rule.reason} ${approval.reason}.`
     : rule.reason;
 
   return {
@@ -187,6 +193,7 @@ export function analyzeRecoveryCase(
       normalizedAmount,
       estimatedRecoveryAmount,
       recoveryProbability,
+      currentPolicy.highValueThreshold,
     ),
   };
 }
