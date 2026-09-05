@@ -18,8 +18,8 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
-
+import { useEffect,useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   analyzeRecoveryCase,
   type RecoveryDecision,
@@ -29,11 +29,12 @@ import {
   addAuditRecords,
   getStoredCases,
   saveStoredCases,
+  clearAuditRecords,
   updateCase,
   type AuditRecord,
   type StoredCase,
 } from "@/lib/recovery-store";
-
+import { clearBatchSimulationSummary } from "@/lib/batch-store";
 import {
   runBatchSimulation,
   type BatchSimulationCase,
@@ -315,7 +316,7 @@ export default function RecoveryPage() {
 
   const [filter, setFilter] =
     useState<"All" | RecoveryStatus>("All");
-
+  const router = useRouter();
   const [isRecoveryRunning, setIsRecoveryRunning] =
     useState(false);
 
@@ -323,7 +324,10 @@ export default function RecoveryPage() {
     useState<Record<string, RecoveryDecision>>({});
 
   const [executedCases, setExecutedCases] =
-    useState<Record<string, boolean>>({});
+  useState<Record<string, boolean>>({});
+
+const [storedCases, setStoredCases] =
+  useState<StoredCase[]>([]);
 
   const [agentActivities, setAgentActivities] =
     useState<AgentActivity[]>([]);
@@ -338,7 +342,25 @@ export default function RecoveryPage() {
     useState<string | null>(null);
 
   const agentActivityRef = useRef<HTMLElement>(null);
+useEffect(() => {
+  const timer = window.setTimeout(() => {
+    const stored = getStoredCases();
 
+    setStoredCases(stored);
+
+    const executedMap: Record<string, boolean> = {};
+
+    stored.forEach((item) => {
+      if (item.executed) {
+        executedMap[item.id] = true;
+      }
+    });
+
+    setExecutedCases(executedMap);
+  }, 0);
+
+  return () => window.clearTimeout(timer);
+}, []);
   const recoveryDecisionCount =
     Object.keys(recoveryDecisions).length;
 
@@ -368,10 +390,10 @@ export default function RecoveryPage() {
     : undefined;
 
   const selectedStoredCase = selectedCase
-    ? getStoredCases().find(
-        (item) => item.id === selectedCase.id,
-      )
-    : undefined;
+  ? storedCases.find(
+      (item) => item.id === selectedCase.id,
+    )
+  : undefined;
 
   const selectedIsExecuted =
     Boolean(selectedStoredCase?.executed) ||
@@ -397,10 +419,13 @@ export default function RecoveryPage() {
           ),
       );
 
-      saveStoredCases([
-        ...existingCases,
-        ...batchStoredCases,
-      ]);
+      const nextStoredCases = [
+  ...existingCases,
+  ...batchStoredCases,
+];
+
+saveStoredCases(nextStoredCases);
+setStoredCases(nextStoredCases);
 
       setBatchResult(result);
       setIsBatchRunning(false);
@@ -408,131 +433,180 @@ export default function RecoveryPage() {
   };
 
   const handleRunRecovery = async () => {
-    setIsRecoveryRunning(true);
+  setIsRecoveryRunning(true);
 
-    try {
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => resolve());
-      });
+  try {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
 
-      const decisions = cases.reduce<
-        Record<string, RecoveryDecision>
-      >((results, caseData) => {
-        results[caseData.id] =
-          analyzeRecoveryCase(caseData);
+    const decisions: Record<string, RecoveryDecision> = {};
 
-        return results;
-      }, {});
-
-      setRecoveryDecisions(decisions);
-
-      const existingCases = getStoredCases();
-
-      const existingById = new Map(
-        existingCases.map((item) => [item.id, item]),
-      );
-
-      const nextStoredCases = cases.map((caseData) =>
-        toStoredCase(
-          caseData,
-          decisions[caseData.id],
-          existingById.get(caseData.id),
-        ),
-      );
-
-      saveStoredCases(nextStoredCases);
-
-      setExecutedCases({});
-
-      const auditRecords: AuditRecord[] = [];
-
-      cases.forEach((caseData) => {
-        const decision = decisions[caseData.id];
-
-        const approvalStatus = decision.requiresApproval
-          ? "Approval required"
-          : "Auto-approved";
-
-        const now = new Date().toISOString();
-
-        auditRecords.push(
+    for (const caseData of cases) {
+      try {
+        const response = await fetch(
+          "/api/ai/analyze-recovery",
           {
-            id: `${decision.caseId}-${Date.now()}-analyzed`,
-            timestamp: now,
-            caseId: decision.caseId,
-            customer: caseData.customer,
-            event: "Case analyzed",
-            action: "Recovery analysis",
-            confidence: decision.confidence,
-            approvalStatus,
-            amountValue: caseData.amountValue,
-            amount: formatCurrency(
-              caseData.amountValue,
-            ),
-          },
-          {
-            id: `${decision.caseId}-${Date.now()}-root-cause`,
-            timestamp: now,
-            caseId: decision.caseId,
-            customer: caseData.customer,
-            event: "Root cause identified",
-            action: decision.rootCause,
-            confidence: decision.confidence,
-            approvalStatus,
-            amountValue: caseData.amountValue,
-            amount: formatCurrency(
-              caseData.amountValue,
-            ),
-          },
-          {
-            id: `${decision.caseId}-${Date.now()}-recommended`,
-            timestamp: now,
-            caseId: decision.caseId,
-            customer: caseData.customer,
-            event: "Recovery action recommended",
-            action: decision.recommendedAction,
-            confidence: decision.confidence,
-            approvalStatus,
-            amountValue:
-              decision.estimatedRecoveryAmount,
-            amount: formatCurrency(
-              decision.estimatedRecoveryAmount,
-            ),
-          },
-          {
-            id: `${decision.caseId}-${Date.now()}-approval`,
-            timestamp: now,
-            caseId: decision.caseId,
-            customer: caseData.customer,
-            event: decision.requiresApproval
-              ? "Approval required"
-              : "Auto-approval eligible",
-            action: decision.recommendedAction,
-            confidence: decision.confidence,
-            approvalStatus,
-            amountValue:
-              decision.estimatedRecoveryAmount,
-            amount: formatCurrency(
-              decision.estimatedRecoveryAmount,
-            ),
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              id: caseData.id,
+              customer: caseData.customer,
+              type: caseData.type,
+              amountValue: caseData.amountValue,
+              reason: caseData.reason,
+              attempts: caseData.attempts,
+              historicalConfidence: caseData.confidence,
+            }),
           },
         );
-      });
 
-      addAuditRecords(auditRecords);
+        if (!response.ok) {
+  const errorBody = await response.json().catch(() => null);
 
-      setAgentActivities(
-        cases.map((caseData) =>
-          createAgentActivity(
-            caseData,
-            decisions[caseData.id],
-          ),
-        ),
-      );
-    } finally {
-      setIsRecoveryRunning(false);
+  throw new Error(
+    errorBody?.error ||
+      `AI request failed with status ${response.status}`,
+  );
+}
+
+        const result = await response.json();
+
+        if (!result.success || !result.decision) {
+          throw new Error(
+            result.error || "AI returned no decision.",
+          );
+        }
+
+        decisions[caseData.id] =
+          result.decision as RecoveryDecision;
+      } catch (error) {
+        console.error(
+          `Gemini analysis failed for ${caseData.id}:`,
+          error,
+        );
+
+        /*
+         * Safe fallback:
+         * if Gemini is unavailable, RecoverAI continues using
+         * the existing deterministic recovery engine.
+         */
+        decisions[caseData.id] =
+          analyzeRecoveryCase(caseData);
+      }
     }
-  };
+
+    setRecoveryDecisions(decisions);
+
+    const existingCases = getStoredCases();
+
+    const existingById = new Map(
+      existingCases.map((item) => [item.id, item]),
+    );
+
+    const nextStoredCases = cases.map((caseData) =>
+      toStoredCase(
+        caseData,
+        decisions[caseData.id],
+        existingById.get(caseData.id),
+      ),
+    );
+
+    saveStoredCases(nextStoredCases);
+setStoredCases(nextStoredCases);
+    setExecutedCases({});
+
+    const auditRecords: AuditRecord[] = [];
+
+    cases.forEach((caseData) => {
+      const decision = decisions[caseData.id];
+
+      const approvalStatus = decision.requiresApproval
+        ? "Approval required"
+        : "Auto-approved";
+
+      const now = new Date().toISOString();
+
+      auditRecords.push(
+        {
+          id: `${decision.caseId}-${Date.now()}-analyzed`,
+          timestamp: now,
+          caseId: decision.caseId,
+          customer: caseData.customer,
+          event: "Case analyzed",
+          action: "Gemini AI recovery analysis",
+          confidence: decision.confidence,
+          approvalStatus,
+          amountValue: caseData.amountValue,
+          amount: formatCurrency(
+            caseData.amountValue,
+          ),
+        },
+        {
+          id: `${decision.caseId}-${Date.now()}-root-cause`,
+          timestamp: now,
+          caseId: decision.caseId,
+          customer: caseData.customer,
+          event: "Root cause identified",
+          action: decision.rootCause,
+          confidence: decision.confidence,
+          approvalStatus,
+          amountValue: caseData.amountValue,
+          amount: formatCurrency(
+            caseData.amountValue,
+          ),
+        },
+        {
+          id: `${decision.caseId}-${Date.now()}-recommended`,
+          timestamp: now,
+          caseId: decision.caseId,
+          customer: caseData.customer,
+          event: "Recovery action recommended",
+          action: decision.recommendedAction,
+          confidence: decision.confidence,
+          approvalStatus,
+          amountValue:
+            decision.estimatedRecoveryAmount,
+          amount: formatCurrency(
+            decision.estimatedRecoveryAmount,
+          ),
+        },
+        {
+          id: `${decision.caseId}-${Date.now()}-approval`,
+          timestamp: now,
+          caseId: decision.caseId,
+          customer: caseData.customer,
+          event: decision.requiresApproval
+            ? "Approval required"
+            : "Auto-approval eligible",
+          action: decision.recommendedAction,
+          confidence: decision.confidence,
+          approvalStatus,
+          amountValue:
+            decision.estimatedRecoveryAmount,
+          amount: formatCurrency(
+            decision.estimatedRecoveryAmount,
+          ),
+        },
+      );
+    });
+
+    addAuditRecords(auditRecords);
+
+    setAgentActivities(
+      cases.map((caseData) =>
+        createAgentActivity(
+          caseData,
+          decisions[caseData.id],
+        ),
+      ),
+    );
+  } finally {
+    setIsRecoveryRunning(false);
+  }
+};
 
   const handleExecuteRecovery = async (
     caseData: RecoveryCase,
@@ -577,25 +651,39 @@ export default function RecoveryPage() {
 
       addAuditRecords([auditRecord]);
 
-      updateCase(caseData.id, {
-        executed: true,
-        executedAt: timestamp,
-        blocked: false,
-      });
+      const updatedCase = updateCase(caseData.id, {
+  executed: true,
+  executedAt: timestamp,
+  blocked: false,
+});
 
-      setExecutedCases((current) => ({
-        ...current,
-        [caseData.id]: true,
-      }));
+if (updatedCase) {
+  setStoredCases((current) =>
+    current.map((item) =>
+      item.id === caseData.id ? updatedCase : item,
+    ),
+  );
+}
+
+setExecutedCases((current) => ({
+  ...current,
+  [caseData.id]: true,
+}));
     } finally {
       setExecutingCaseId(null);
     }
   };
 
   const handleOpenApprovals = () => {
-    window.location.href = "/approvals";
+    router.push("/approvals");
   };
+  const handleResetDemo = () => {
+  clearAuditRecords();
+  clearBatchSimulationSummary();
+  window.localStorage.removeItem("recover-ai-cases");
 
+  window.location.reload();
+};
   const filteredCases = useMemo(() => {
     return cases.filter((item) => {
       const query = search.toLowerCase();
@@ -678,6 +766,14 @@ export default function RecoveryPage() {
                 {isBatchRunning
                   ? "Simulating..."
                   : "Run batch simulation"}
+              </button>
+              <button
+                type="button"
+                onClick={handleResetDemo}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 text-sm font-medium text-amber-400 transition-colors hover:bg-amber-500/10"
+              >
+                <X className="size-4" />
+                Reset demo data
               </button>
             </div>
 
@@ -884,8 +980,8 @@ export default function RecoveryPage() {
                 </h3>
 
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Decisions generated by the local RecoverAI recovery
-                  engine.
+                  Gemini AI decisions checked against RecoverAI
+merchant policies.
                 </p>
               </div>
 
@@ -1067,10 +1163,9 @@ export default function RecoveryPage() {
                 decision?.recommendedAction ??
                 item.recommendation;
 
-              const storedCase =
-                getStoredCases().find(
-                  (stored) => stored.id === item.id,
-                );
+              const storedCase = storedCases.find(
+  (stored) => stored.id === item.id,
+);
 
               const isExecuted =
                 Boolean(storedCase?.executed) ||
@@ -1307,8 +1402,7 @@ export default function RecoveryPage() {
                 <SectionTitle
                   icon={Bot}
                   title="AI diagnosis"
-                  subtitle="Why RecoverAI believes this case is recoverable."
-                />
+                  subtitle="Gemini analyzes the payment event and explains why recovery is likely."                />
 
                 <div className="mt-4 rounded-xl border border-border bg-card p-5">
                   <p className="text-sm leading-6 text-muted-foreground">

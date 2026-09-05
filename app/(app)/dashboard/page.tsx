@@ -276,7 +276,10 @@ export default function DashboardPage() {
 
             {stats.auditCount} actions logged
           </div>
-
+          <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary">
+            <Sparkles className="size-3.5" />
+            Gemini AI Agent
+          </div>
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
             Revenue recovery overview
           </h1>
@@ -433,7 +436,7 @@ export default function DashboardPage() {
 
             <p className="text-xs leading-5 text-muted-foreground">
               Batch figures are synthetic demo results. They
-              demonstrate RecoverAI's decision and policy
+              demonstrate RecoverAI decision and policy
               workflow and do not represent real merchant
               revenue.
             </p>
